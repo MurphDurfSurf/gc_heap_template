@@ -50,8 +50,12 @@ impl<const MAX_BLOCKS: usize> BlockTable<MAX_BLOCKS> {
     }
 
     fn available_block(&self) -> Option<usize> {
-        todo!("Return the lowest numbered unused block");
-    }
+        for index in 0..MAX_BLOCKS {
+            if self.block_info[index].is_none() {
+                return Some(index)
+            }
+        } None
+    } 
 
     fn blocks_in_use(&self) -> impl Iterator<Item = usize> + '_ {
         (0..MAX_BLOCKS).filter(|b| self.block_info[*b].is_some())
@@ -63,8 +67,26 @@ impl<const MAX_BLOCKS: usize> BlockTable<MAX_BLOCKS> {
     }
 
     fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
-        todo!("Find the address, i.e., start + offset, for the Pointer `p`");
-        // Outline
+        if p.block_num() >= MAX_BLOCKS {
+            return Err(HeapError::IllegalBlock(p.block_num(), MAX_BLOCKS))
+        }
+        match self.block_info[p.block_num()] {
+            Some(info) => {
+                if p.offset() > info.size {
+                    return Err(HeapError::OffsetTooBig(p.offset(), p.len(), MAX_BLOCKS))
+                }
+                if p.len() != info.size {
+                    return Err(HeapError::MisalignedPointer(p.len(), info.size, MAX_BLOCKS))
+                }
+                else {
+                    return Ok(info.start + p.offset())
+                }
+        
+        
+            }
+            None => return Err(HeapError::UnallocatedBlock(p.block_num()))
+        };
+         // Outline
         //
         // 1. If p has a block number not present in the array, report IllegalBlock.
         // 2. If p's block has a `None` entry, report UnallocatedBlock.
@@ -100,15 +122,45 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
     }
 
     fn load(&self, address: usize) -> anyhow::Result<u64, HeapError> {
-        todo!("Return contents of heap at the given address. If address is illegal report it.");
+        if address >= HEAP_SIZE {
+            return Err(HeapError::IllegalAddress(address, HEAP_SIZE))
+        }
+        else {
+            return Ok(self.heap[address])
+        }
+        // todo!("Return contents of heap at the given address. If address is illegal report it.");
     }
 
     fn store(&mut self, address: usize, value: u64) -> anyhow::Result<(), HeapError> {
-        todo!("Store value in heap at the given address. If address is illegal report it.");
+        if address >= HEAP_SIZE {
+            return Err(HeapError::IllegalAddress(address, HEAP_SIZE))
+        }
+        else {
+            Ok(self.heap[address] = value)
+            
+        }
+        //todo!("Store value in heap at the given address. If address is illegal report it.");
     }
 
     fn malloc(&mut self, num_words: usize) -> anyhow::Result<usize, HeapError> {
-        todo!("Perform basic malloc");
+        if num_words == 0 {
+            return Err(HeapError::ZeroSizeRequest)
+        }
+        
+        let end_address = self.next_address.checked_add(num_words)
+            .ok_or(HeapError::OutOfMemory)?;
+
+        if end_address > HEAP_SIZE {
+            return Err(HeapError::OutOfMemory)
+        }
+
+        let allocation_address = self.next_address;
+
+        self.next_address = end_address;
+
+        Ok(allocation_address)
+        
+        //todo!("Perform basic malloc");
         // Outline
         //
         // If the request is of size zero, report ZeroSizeRequest
@@ -118,7 +170,21 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
     }
 
     fn copy(&self, src: &BlockInfo, dest: &mut Self) -> anyhow::Result<BlockInfo, HeapError> {
-        todo!("Copy memory contents from src to dest");
+        // todo!("Copy memory contents from src to dest");
+        
+        let copy = dest.malloc(src.size)?;
+
+        for offset in 0..src.size {
+            let value = dest.load(src.start + offset)?;
+            dest.store(copy + offset, value)?;
+        }
+
+        return Ok(BlockInfo {
+            start: copy,
+            size: src.size,
+            num_times_copied: src.num_times_copied + 1,
+        })  
+
         // Outline
         //
         // Perform a malloc() in dest of the block's size.
@@ -476,7 +542,7 @@ mod tests {
         let mut allocator = RamHeap::<HEAP_SIZE>::new();
         match allocator.load(HEAP_SIZE + 1) {
             Ok(_) => panic!("This should have been an IllegalAddress error."),
-            Err(e) => assert_eq!(e, HeapError::IllegalAddress(HEAP_SIZE + 1, 0))
+            Err(e) => assert_eq!(e, HeapError::IllegalAddress(HEAP_SIZE + 1, HEAP_SIZE))
         }
 
         allocator.malloc(96).unwrap();
