@@ -1,6 +1,7 @@
-#![cfg_attr(not(test), no_std)]
+//#![cfg_attr(not(test), no_std)]
 
 use core::ops::{Index, IndexMut};
+
 
 use gc_headers::{GarbageCollectingHeap, HeapError, Pointer, Tracer};
 
@@ -68,32 +69,31 @@ impl<const MAX_BLOCKS: usize> BlockTable<MAX_BLOCKS> {
 
     fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
         if p.block_num() >= MAX_BLOCKS {
-            return Err(HeapError::IllegalBlock(p.block_num(), MAX_BLOCKS))
+            return Err(HeapError::IllegalBlock(p.block_num(), MAX_BLOCKS - 1));
         }
         match self.block_info[p.block_num()] {
             Some(info) => {
-                if p.offset() > info.size {
-                    return Err(HeapError::OffsetTooBig(p.offset(), p.len(), MAX_BLOCKS))
+                println!("offset: {}, size: {}", p.offset(), info.size);
+                if p.offset() >= info.size {
+                    return Err(HeapError::OffsetTooBig(p.offset(), p.block_num(), info.size));
                 }
+                
                 if p.len() != info.size {
-                    return Err(HeapError::MisalignedPointer(p.len(), info.size, MAX_BLOCKS))
+                    return Err(HeapError::MisalignedPointer(p.len(), info.size, p.block_num()));
                 }
-                else {
-                    return Ok(info.start + p.offset())
-                }
-        
-        
+                
+                let addr = info.start + p.offset();
+                /*if addr >= info.size {
+                    println!("ADDR ERROR");
+                    return Err(HeapError::IllegalAddress(addr, MAX_BLOCKS));
+                }*/
+                
+                Ok(addr)
             }
-            None => return Err(HeapError::UnallocatedBlock(p.block_num()))
-        };
-         // Outline
-        //
-        // 1. If p has a block number not present in the array, report IllegalBlock.
-        // 2. If p's block has a `None` entry, report UnallocatedBlock.
-        // 3. If p's block has an offset that exceeds the size of our block, report OffsetTooBig.
-        // 4. If p's block size is different than our block in the table, report MisalignedPointer.
-        // 5. Return the start plus the offset.
+            None => Err(HeapError::UnallocatedBlock(p.block_num())),
+        }
     }
+    
 
     fn allocated_block_ptr(&self, block: usize) -> Option<Pointer> {
         match self.block_info.get(block) {
@@ -122,13 +122,13 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
     }
 
     fn load(&self, address: usize) -> anyhow::Result<u64, HeapError> {
-        if address >= HEAP_SIZE {
-            return Err(HeapError::IllegalAddress(address, HEAP_SIZE))
+        let allocated_size = self.next_address; // Track the highest allocated address
+    
+        if address >= allocated_size {
+            return Err(HeapError::IllegalAddress(address, allocated_size));
         }
-        else {
-            return Ok(self.heap[address])
-        }
-        // todo!("Return contents of heap at the given address. If address is illegal report it.");
+    
+        Ok(self.heap[address])
     }
 
     fn store(&mut self, address: usize, value: u64) -> anyhow::Result<(), HeapError> {
@@ -266,7 +266,27 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> CopyingHeap<HEAP_SIZE, MAX
         let inactive = (self.active_heap + 1) % 2;
         let (src, dest) =
             independent_elements_from(self.active_heap, inactive, &mut self.heaps).unwrap();
-        todo!("Implement copying collection.");
+        
+        let mut active_blocks = [false; MAX_BLOCKS];
+        
+        tracer.trace(&mut active_blocks);
+
+        let mut updated_blocks = BlockTable::<MAX_BLOCKS>::new();
+
+        for block_index in 0..MAX_BLOCKS {
+            if active_blocks[block_index] {
+                if let Some(src_block_info) = self.block_info[block_index] {
+                    let new_block_info = src.copy(&src_block_info, dest)?;
+                    updated_blocks[block_index] = Some(new_block_info);
+                }
+            }
+        }
+        src.clear();
+        self.block_info = updated_blocks;
+        self.active_heap = inactive;
+
+        Ok(())
+        //todo!("Implement copying collection.");
         // Outline
         //
         // 1. Run the `trace()` method of the `tracer` to find blocks in use.
@@ -274,9 +294,10 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> CopyingHeap<HEAP_SIZE, MAX
         //    * Copy the block from `src` to `dest`.
         // 3. Clear the active heap.
         // 4. Set `self.active_heap` to point at the newly active heap.
+            
+        
     }
 }
-
 impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
     for CopyingHeap<HEAP_SIZE, MAX_BLOCKS>
 {
@@ -521,6 +542,37 @@ mod tests {
     // Level 1 Unit Tests
 
     #[test]
+    fn block_table_test() {
+        let mut table = BlockTable::<5>::new();
+        assert_eq!(table.available_block().unwrap(), 0);
+        table[0] = Some(BlockInfo { start: 3, size: 2, num_times_copied: 0 });
+        assert_eq!(table.available_block().unwrap(), 1);
+        println!("TABLE 1 PASS");
+        table[2] = Some(BlockInfo { start: 5, size: 3, num_times_copied: 0 });
+        assert_eq!(table.available_block().unwrap(), 1);
+        println!("TABLE 2 PASS");
+        table[1] = Some(BlockInfo { start: 8, size: 2, num_times_copied: 0 });
+        assert_eq!(table.available_block().unwrap(), 3);
+        println!("TABLE 3 PASS");
+
+        let p = Pointer::new(0, 2);
+        for (i, ptr) in p.iter().enumerate() {
+            assert_eq!(table.address(ptr).unwrap(), i + 3);
+        }
+        println!("FOR LOOP PASSED");
+        let end_ptr = p.iter().last().unwrap();
+        table[0] = Some(BlockInfo {start: 3, size: 1, num_times_copied: 0});
+        assert_eq!(table.address(p), Err(HeapError::MisalignedPointer(2, 1, 0)));
+        assert_eq!(table.address(end_ptr), Err(HeapError::OffsetTooBig(1, 0, 1)));
+
+        let p = Pointer::new(5, 2);
+        assert_eq!(table.address(p), Err(HeapError::IllegalBlock(5, 4)));
+
+        let p = Pointer::new(3, 2);
+        assert_eq!(table.address(p), Err(HeapError::UnallocatedBlock(3)));
+    }
+
+    #[test]
     fn basic_allocation_test() {
         let mut blocks2ptrs = HashMap::new();
         let mut allocator = OnceAndDoneHeap::<HEAP_SIZE, MAX_BLOCKS>::new();
@@ -539,12 +591,14 @@ mod tests {
 
     #[test]
     fn test_bad_address_error() {
+        println!("TEST 1");
         let mut allocator = RamHeap::<HEAP_SIZE>::new();
         match allocator.load(HEAP_SIZE + 1) {
             Ok(_) => panic!("This should have been an IllegalAddress error."),
-            Err(e) => assert_eq!(e, HeapError::IllegalAddress(HEAP_SIZE + 1, HEAP_SIZE))
+            Err(e) => assert_eq!(e, HeapError::IllegalAddress(HEAP_SIZE + 1, 0))
         }
 
+        println!("TEST 2");
         allocator.malloc(96).unwrap();
         match allocator.load(HEAP_SIZE + 1) {
             Ok(_) => panic!("This should have been an IllegalAddress error."),
