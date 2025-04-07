@@ -174,7 +174,7 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
         let copy = dest.malloc(src.size)?;
 
         for offset in 0..src.size {
-            let value = dest.load(src.start + offset)?;
+            let value = self.load(src.start + offset)?; // Value is self.load, not dest.load as what would the point be in loading data from the destination list?
             dest.store(copy + offset, value)?;
         }
 
