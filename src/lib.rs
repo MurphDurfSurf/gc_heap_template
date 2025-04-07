@@ -482,7 +482,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
         //      * You'll need a variable to track whether you have already performed a generation 1 collection.
         //      * If so, just return the error - multiple generation 1 collections will not be productive
         //      * If not, copy into the active generation 1 heap.
-        //      * If that heap is out of space, perform a generation 1 collection.
+        //      * If that heap is out of space, perform a generation 1 collection by calling self.collect_gen_1().
         //      * After the generation 1 collection, try copying it into the inactive generation 1 heap.
         //    * If not, copy it into the inactive generation 0 heap.
         // 3. Clear the active generation 0 heap.
@@ -565,10 +565,10 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         // Outline
         //
         // 1. Find an available block number
-        //    * If none are available, perform a collection.
+        //    * If none are available, perform a collection by calling self.collect_gen_0().
         //    * If none are still available, report out of blocks.
         // 2. Perform a generation zero malloc.
-        //    * If no space is available, perform a collection.
+        //    * If no space is available, perform a collection by calling self.collect_gen_0().
         //    * If no space is still available, report out of memory.
         // 3. Create entry in the block table for the newly allocated block.
         // 4. Return a pointer to the newly allocated block.
