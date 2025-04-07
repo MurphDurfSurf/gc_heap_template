@@ -1,4 +1,4 @@
-//#![cfg_attr(not(test), no_std)]
+// #![cfg_attr(not(test), no_std)]
 
 use core::ops::{Index, IndexMut};
 
@@ -73,7 +73,6 @@ impl<const MAX_BLOCKS: usize> BlockTable<MAX_BLOCKS> {
         }
         match self.block_info[p.block_num()] {
             Some(info) => {
-                println!("offset: {}, size: {}", p.offset(), info.size);
                 if p.offset() >= info.size {
                     return Err(HeapError::OffsetTooBig(p.offset(), p.block_num(), info.size));
                 }
@@ -267,25 +266,27 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> CopyingHeap<HEAP_SIZE, MAX
         let (src, dest) =
             independent_elements_from(self.active_heap, inactive, &mut self.heaps).unwrap();
         
-        let mut active_blocks = [false; MAX_BLOCKS];
-        
-        tracer.trace(&mut active_blocks);
+            let mut active_blocks = [false; MAX_BLOCKS];
+            tracer.trace(&mut active_blocks);
 
-        let mut updated_blocks = BlockTable::<MAX_BLOCKS>::new();
+            let mut updated_blocks = BlockTable::<MAX_BLOCKS>::new();
 
-        for block_index in 0..MAX_BLOCKS {
-            if active_blocks[block_index] {
-                if let Some(src_block_info) = self.block_info[block_index] {
-                    let new_block_info = src.copy(&src_block_info, dest)?;
-                    updated_blocks[block_index] = Some(new_block_info);
+            //dest.clear();
+            
+            for block_index in 0..MAX_BLOCKS {
+                if active_blocks[block_index] {
+                    if let Some(src_block_info) = self.block_info[block_index] {
+                        let mut new_block_info = src.copy(&src_block_info, dest)?;
+                        new_block_info.num_times_copied = 0; 
+                        updated_blocks[block_index] = Some(new_block_info);
+                    }
                 }
             }
-        }
-        src.clear();
-        self.block_info = updated_blocks;
-        self.active_heap = inactive;
 
-        Ok(())
+            src.clear();
+            self.block_info = updated_blocks;
+            self.active_heap = inactive;
+            Ok(())
         //todo!("Implement copying collection.");
         // Outline
         //
@@ -337,22 +338,73 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
         self.block_info.blocks_num_copies()
     }
 
-    fn malloc<T: Tracer>(
-        &mut self,
-        num_words: usize,
-        tracer: &T,
-    ) -> anyhow::Result<Pointer, HeapError> {
-        todo!("Implement malloc");
-        // Outline
-        //
-        // 1. Find an available block number
-        //    * If none are available, perform a collection.
-        //    * If none are still available, report out of blocks.
-        // 2. Perform a malloc in the currently active heap.
-        //    * If no space is available, perform a collection.
-        //    * If no space is still available, report out of memory.
-        // 3. Create entry in the block table for the newly allocated block.
-        // 4. Return a pointer to the newly allocated block.
+    fn malloc<T: Tracer>(&mut self, num_words: usize, tracer: &T) -> anyhow::Result<Pointer, HeapError> {
+        if num_words == 0 {
+            return Err(HeapError::ZeroSizeRequest);
+        }
+        let mut available_block = None;
+
+        // Find an available block
+        //println!("\n Find an available block");
+        for block_index in 0..MAX_BLOCKS {
+            if self.block_info[block_index].is_none() {
+                available_block = Some(block_index);
+                break;
+            }
+        }
+
+        // If no blocks available, trigger garbage collection
+        //println!("\n If no blocks available, trigger garbage collection");
+        if available_block.is_none() {
+            self.collect(tracer)?;
+
+            // Try again after collection
+            //println!("\n Try again after collection");
+            for block_index in 0..MAX_BLOCKS {
+                if self.block_info[block_index].is_none() {
+                    available_block = Some(block_index);
+                    break;
+                }
+            }
+            if available_block.is_none() {
+                println!("\n OutOfBlocks Err Caught! \n");
+                return Err(HeapError::OutOfBlocks)
+            }
+        }
+
+        let block_index = available_block.unwrap();
+
+        // Attempt allocation in the active heap
+        //println!("\n Attempt allocation in the active heap");
+        
+        let allocation_result = self.heaps[self.active_heap].malloc(num_words);
+        let block_start = match allocation_result {
+            Ok(addr) => addr,
+            Err(_) => {
+                // KEY FIX: Clear destination heap before collection
+                self.heaps[(self.active_heap + 1) % 2].clear();
+                self.collect(tracer)?;
+                
+                // Retry allocation in SAME heap after collection
+                // println!("\n OutOfMemory Err Caught!");
+                match self.heaps[self.active_heap].malloc(num_words) {
+                    Ok(addr) => addr,
+                    Err(_) => return Err(HeapError::OutOfMemory), 
+                }
+            }
+        };
+
+        // Register new block
+        //println!("\n Register new block");
+        self.block_info[block_index] = Some(BlockInfo {
+            start: block_start,
+            size: num_words,
+            num_times_copied: 0,
+        });
+
+        // Return pointer to allocated block
+        //println!("\n Return pointer to allocated block");
+        Ok(Pointer::new(block_index, num_words))
     }
 
     fn assert_no_strays(&self) {
@@ -625,9 +677,13 @@ mod tests {
         let mut allocator = CopyingHeap::<HEAP_SIZE, MAX_BLOCKS>::new();
         let mut tracer = TestTracer::default();
         test_initial_allocation(&mut allocator, &mut tracer, &mut blocks2ptrs);
+        println!("\n Passed initaila allocation \n");
         test_out_of_blocks(&mut allocator, &mut tracer);
+        println!("\n Passed Out of blocks \n");
         test_remove_half(&mut allocator, &mut tracer, &mut blocks2ptrs);
+        println!("\n Passed Remove Half \n");
         test_force_collection(&mut allocator, &mut tracer, &mut blocks2ptrs);
+        
         allocator.assert_no_strays();
     }
 
