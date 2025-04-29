@@ -1,7 +1,8 @@
-// #![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_std)]
 
 use core::ops::{Index, IndexMut};
 
+use core::result::Result;
 
 use gc_headers::{GarbageCollectingHeap, HeapError, Pointer, Tracer};
 
@@ -67,7 +68,7 @@ impl<const MAX_BLOCKS: usize> BlockTable<MAX_BLOCKS> {
             .map(|b| (b, self.block_info[b].unwrap().num_times_copied))
     }
 
-    fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
+    fn address(&self, p: Pointer) -> Result<usize, HeapError> {
         if p.block_num() >= MAX_BLOCKS {
             return Err(HeapError::IllegalBlock(p.block_num(), MAX_BLOCKS - 1));
         }
@@ -120,7 +121,7 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
         self.next_address = 0;
     }
 
-    fn load(&self, address: usize) -> anyhow::Result<u64, HeapError> {
+    fn load(&self, address: usize) -> Result<u64, HeapError> {
         let allocated_size = self.next_address; // Track the highest allocated address
     
         if address >= allocated_size {
@@ -130,7 +131,7 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
         Ok(self.heap[address])
     }
 
-    fn store(&mut self, address: usize, value: u64) -> anyhow::Result<(), HeapError> {
+    fn store(&mut self, address: usize, value: u64) -> Result::<(), HeapError> {
         if address >= HEAP_SIZE {
             return Err(HeapError::IllegalAddress(address, HEAP_SIZE))
         }
@@ -141,7 +142,7 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
         //todo!("Store value in heap at the given address. If address is illegal report it.");
     }
 
-    fn malloc(&mut self, num_words: usize) -> anyhow::Result<usize, HeapError> {
+    fn malloc(&mut self, num_words: usize) -> Result<usize, HeapError> {
         if num_words == 0 {
             return Err(HeapError::ZeroSizeRequest)
         }
@@ -168,7 +169,7 @@ impl<const HEAP_SIZE: usize> RamHeap<HEAP_SIZE> {
         // Otherwise, update `self.next_address` and return the address of the newly allocated memory.
     }
 
-    fn copy(&self, src: &BlockInfo, dest: &mut Self) -> anyhow::Result<BlockInfo, HeapError> {
+    fn copy(&self, src: &BlockInfo, dest: &mut Self) -> Result<BlockInfo, HeapError> {
         // todo!("Copy memory contents from src to dest");
         
         let copy = dest.malloc(src.size)?;
@@ -207,17 +208,17 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
         }
     }
 
-    fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
+    fn address(&self, p: Pointer) -> Result<usize, HeapError> {
         self.block_info.address(p)
     }
 
-    fn load(&self, p: Pointer) -> anyhow::Result<u64, HeapError> {
+    fn load(&self, p: Pointer) -> Result<u64, HeapError> {
         self.block_info
             .address(p)
             .and_then(|address| self.heap.load(address))
     }
 
-    fn store(&mut self, p: Pointer, value: u64) -> anyhow::Result<(), HeapError> {
+    fn store(&mut self, p: Pointer, value: u64) -> Result<(), HeapError> {
         self.block_info
             .address(p)
             .and_then(|address| self.heap.store(address, value))
@@ -235,7 +236,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
         self.block_info.blocks_num_copies()
     }
 
-    fn malloc<T: Tracer>(&mut self, num_words: usize, _: &T) -> anyhow::Result<Pointer, HeapError> {
+    fn malloc<T: Tracer>(&mut self, num_words: usize, _: &T) -> Result<Pointer, HeapError> {
         match self.block_info.available_block() {
             Some(block_num) => {
                 let start = self.heap.malloc(num_words)?;
@@ -260,7 +261,7 @@ pub struct CopyingHeap<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> {
 }
 
 impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> CopyingHeap<HEAP_SIZE, MAX_BLOCKS> {
-    fn collect<T: Tracer>(&mut self, tracer: &T) -> anyhow::Result<(), HeapError> {
+    fn collect<T: Tracer>(&mut self, tracer: &T) -> Result<(), HeapError> {
         // These lines are helpful for avoiding borrow checker problems with arrays.
         let inactive = (self.active_heap + 1) % 2;
         let (src, dest) =
@@ -310,17 +311,17 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
         }
     }
 
-    fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
+    fn address(&self, p: Pointer) -> Result::<usize, HeapError> {
         self.block_info.address(p)
     }
 
-    fn load(&self, p: Pointer) -> anyhow::Result<u64, HeapError> {
+    fn load(&self, p: Pointer) -> Result::<u64, HeapError> {
         self.block_info
             .address(p)
             .and_then(|address| self.heaps[self.active_heap].load(address))
     }
 
-    fn store(&mut self, p: Pointer, value: u64) -> anyhow::Result<(), HeapError> {
+    fn store(&mut self, p: Pointer, value: u64) -> Result::<(), HeapError> {
         self.block_info
             .address(p)
             .and_then(|address| self.heaps[self.active_heap].store(address, value))
@@ -338,7 +339,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
         self.block_info.blocks_num_copies()
     }
 
-    fn malloc<T: Tracer>(&mut self, num_words: usize, tracer: &T) -> anyhow::Result<Pointer, HeapError> {
+    fn malloc<T: Tracer>(&mut self, num_words: usize, tracer: &T) -> Result::<Pointer, HeapError> {
         if num_words == 0 {
             return Err(HeapError::ZeroSizeRequest);
         }
@@ -367,7 +368,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize> GarbageCollectingHeap
                 }
             }
             if available_block.is_none() {
-                println!("\n OutOfBlocks Err Caught! \n");
+                //println!("\n OutOfBlocks Err Caught! \n");
                 return Err(HeapError::OutOfBlocks)
             }
         }
@@ -452,7 +453,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
         )
     }
 
-    fn heap_and_gen_for(&self, block_num: usize) -> anyhow::Result<(usize, usize), HeapError> {
+    fn heap_and_gen_for(&self, block_num: usize) -> Result::<(usize, usize), HeapError> {
         if block_num >= MAX_BLOCKS {
             Err(HeapError::IllegalBlock(block_num, MAX_BLOCKS - 1))
         } else {
@@ -467,7 +468,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
         }
     }
 
-    fn collect_gen_0<T: Tracer>(&mut self, tracer: &T) -> anyhow::Result<(), HeapError> {
+    fn collect_gen_0<T: Tracer>(&mut self, tracer: &T) -> Result::<(), HeapError> {
         // This line is necessary because the borrow checker disallows mutable references to 
         // multiple array elements. By modifying the variables below, you should be able to
         // achieve everything necessary.
@@ -495,7 +496,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
         block_info: &mut BlockTable<MAX_BLOCKS>,
         src: &RamHeap<HEAP_SIZE>,
         dest: &mut RamHeap<HEAP_SIZE>,
-    ) -> anyhow::Result<(), HeapError> {
+    ) -> Result::<(), HeapError> {
         todo!("Complete implementation.");
         // Outline
         //
@@ -518,7 +519,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         }
     }
 
-    fn load(&self, p: Pointer) -> anyhow::Result<u64, HeapError> {
+    fn load(&self, p: Pointer) -> Result::<u64, HeapError> {
         let (heap, gen) = self.heap_and_gen_for(p.block_num())?;
         let address = self.block_info.address(p)?;
         (if gen == 0 {
@@ -529,7 +530,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         .load(address)
     }
 
-    fn store(&mut self, p: Pointer, value: u64) -> anyhow::Result<(), HeapError> {
+    fn store(&mut self, p: Pointer, value: u64) -> Result::<(), HeapError> {
         let (heap, gen) = self.heap_and_gen_for(p.block_num())?;
         let address = self.block_info.address(p)?;
         (if gen == 0 {
@@ -540,7 +541,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         .store(address, value)
     }
 
-    fn address(&self, p: Pointer) -> anyhow::Result<usize, HeapError> {
+    fn address(&self, p: Pointer) -> Result::<usize, HeapError> {
         self.block_info.address(p)
     }
 
@@ -560,7 +561,7 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         &mut self,
         num_words: usize,
         tracer: &T,
-    ) -> anyhow::Result<Pointer, HeapError> {
+    ) -> Result::<Pointer, HeapError> {
         todo!("Implement generational malloc");
         // Outline
         //
@@ -599,19 +600,19 @@ mod tests {
         assert_eq!(table.available_block().unwrap(), 0);
         table[0] = Some(BlockInfo { start: 3, size: 2, num_times_copied: 0 });
         assert_eq!(table.available_block().unwrap(), 1);
-        println!("TABLE 1 PASS");
+       // println!("TABLE 1 PASS");
         table[2] = Some(BlockInfo { start: 5, size: 3, num_times_copied: 0 });
         assert_eq!(table.available_block().unwrap(), 1);
-        println!("TABLE 2 PASS");
+        //println!("TABLE 2 PASS");
         table[1] = Some(BlockInfo { start: 8, size: 2, num_times_copied: 0 });
         assert_eq!(table.available_block().unwrap(), 3);
-        println!("TABLE 3 PASS");
+        //println!("TABLE 3 PASS");
 
         let p = Pointer::new(0, 2);
         for (i, ptr) in p.iter().enumerate() {
             assert_eq!(table.address(ptr).unwrap(), i + 3);
         }
-        println!("FOR LOOP PASSED");
+        //println!("FOR LOOP PASSED");
         let end_ptr = p.iter().last().unwrap();
         table[0] = Some(BlockInfo {start: 3, size: 1, num_times_copied: 0});
         assert_eq!(table.address(p), Err(HeapError::MisalignedPointer(2, 1, 0)));
@@ -643,14 +644,14 @@ mod tests {
 
     #[test]
     fn test_bad_address_error() {
-        println!("TEST 1");
+        //println!("TEST 1");
         let mut allocator = RamHeap::<HEAP_SIZE>::new();
         match allocator.load(HEAP_SIZE + 1) {
             Ok(_) => panic!("This should have been an IllegalAddress error."),
             Err(e) => assert_eq!(e, HeapError::IllegalAddress(HEAP_SIZE + 1, 0))
         }
 
-        println!("TEST 2");
+        //println!("TEST 2");
         allocator.malloc(96).unwrap();
         match allocator.load(HEAP_SIZE + 1) {
             Ok(_) => panic!("This should have been an IllegalAddress error."),
@@ -677,11 +678,11 @@ mod tests {
         let mut allocator = CopyingHeap::<HEAP_SIZE, MAX_BLOCKS>::new();
         let mut tracer = TestTracer::default();
         test_initial_allocation(&mut allocator, &mut tracer, &mut blocks2ptrs);
-        println!("\n Passed initaila allocation \n");
+        //println!("\n Passed initaila allocation \n");
         test_out_of_blocks(&mut allocator, &mut tracer);
-        println!("\n Passed Out of blocks \n");
+        //println!("\n Passed Out of blocks \n");
         test_remove_half(&mut allocator, &mut tracer, &mut blocks2ptrs);
-        println!("\n Passed Remove Half \n");
+        //println!("\n Passed Remove Half \n");
         test_force_collection(&mut allocator, &mut tracer, &mut blocks2ptrs);
         
         allocator.assert_no_strays();
@@ -778,7 +779,7 @@ mod tests {
         blocks2ptrs: &mut HashMap<usize, Pointer>,
     ) {
         for (block_num, request) in [2, 10, 4, 8, 6, 12, 6, 24, 4, 8, 2, 8].iter().enumerate() {
-            println!("block: {block_num} request: {request}");
+            //println!("block: {block_num} request: {request}");
             let allocated_ptr = tracer.allocate_next(*request, allocator).unwrap();
             assert_eq!(block_num, allocated_ptr.block_num());
             assert_eq!(*request, allocated_ptr.len());
