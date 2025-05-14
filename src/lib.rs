@@ -474,7 +474,43 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
         // achieve everything necessary.
         let (active_0, inactive_0, active_1, inactive_1, block_info) =
             self.active_inactive_gen_0_gen_1();
-        todo!("Complete implementation.");
+        let mut blocks_used = [false; MAX_BLOCKS];
+        tracer.trace(&mut blocks_used);
+        let mut collected_gen_1 = false;
+        for i in 0..MAX_BLOCKS {
+            if blocks_used[i] {
+                let old_block = block_info.block_info[i].ok_or(HeapError::UnallocatedBlock(i))?;
+                // println!("Before MAX_COPIES check \n")
+                if old_block.num_times_copied == MAX_COPIES {
+                    let new_block_info = match active_0.copy(&old_block, if collected_gen_1 {inactive_1} else {active_1}) {
+                        Ok(bi) => bi,
+                        Err(HeapError::OutOfMemory) => {
+                            if collected_gen_1 {
+                                return Err(HeapError::OutOfMemory)
+                            }
+                            Self::collect_gen_1(&blocks_used, block_info, active_1, inactive_1)?;
+                            collected_gen_1 = true;
+                            active_0.copy(&old_block, inactive_1)?
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    block_info.block_info[i] = Some(new_block_info);
+                    //println!("Before < MAX_COPIES")
+                } else if old_block.num_times_copied < MAX_COPIES {
+                    let new_block_info = active_0.copy(&old_block, inactive_0)?;
+                    block_info.block_info[i] = Some(new_block_info);
+                }
+            } else {
+                block_info.block_info[i] = None;
+            }
+        }
+        active_0.clear();
+        self.active_gen_0 = (self.active_gen_0 + 1) % 2;
+        if collected_gen_1 {
+            self.active_gen_1 = (self.active_gen_1 + 1) % 2;
+        }
+        Ok(())
+        //todo!("Complete implementation.");
         // Outline
         //
         // 1. Call the tracer to find out what blocks are in use.
@@ -494,10 +530,23 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize>
     fn collect_gen_1(
         blocks_used: &[bool; MAX_BLOCKS],
         block_info: &mut BlockTable<MAX_BLOCKS>,
-        src: &RamHeap<HEAP_SIZE>,
+        src: &mut RamHeap<HEAP_SIZE>, // Wouldn't let me use src.clear unless I make it mut
         dest: &mut RamHeap<HEAP_SIZE>,
     ) -> Result::<(), HeapError> {
-        todo!("Complete implementation.");
+        for i in 0..MAX_BLOCKS {
+            if blocks_used[i] {
+                let old_block = block_info.block_info[i].ok_or(HeapError::UnallocatedBlock(i))?;
+                if old_block.num_times_copied > MAX_COPIES {
+                    let new_block_info = src.copy(&old_block, dest)?;
+                    block_info.block_info[i] = Some(new_block_info);
+                }
+            } else {
+                block_info.block_info[i] = None;
+            }
+        }
+        src.clear();
+        Ok(())
+        //todo!("Complete implementation.");
         // Outline
         //
         // 1. For each block in use:
@@ -562,7 +611,31 @@ impl<const HEAP_SIZE: usize, const MAX_BLOCKS: usize, const MAX_COPIES: usize> G
         num_words: usize,
         tracer: &T,
     ) -> Result::<Pointer, HeapError> {
-        todo!("Implement generational malloc");
+        let block_num = match self.block_info.available_block() {
+            Some(num) => num,
+            None => {
+                self.collect_gen_0(tracer)?;
+                match self.block_info.available_block() {
+                    Some(num) => num,
+                    None => return Err(HeapError::OutOfBlocks),
+                }
+            }
+        };
+        let address = match self.gen_0[self.active_gen_0].malloc(num_words) {
+            Ok(address) => address,
+            Err(HeapError::OutOfMemory) => {
+                self.collect_gen_0(tracer)?;
+                self.gen_0[self.active_gen_0].malloc(num_words)?
+            }
+            Err(e) => return Err(e),
+        };
+        self.block_info[block_num] = Some(BlockInfo {
+            start: address,
+            size: num_words,
+            num_times_copied: 0,
+        });
+        Ok(Pointer::new(block_num, num_words))
+        //todo!("Implement generational malloc");
         // Outline
         //
         // 1. Find an available block number
